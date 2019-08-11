@@ -2,12 +2,20 @@ import os
 import socket
 import threading
 from tqdm import tqdm
+from importlib import reload
+import parser
+import argparse
+
+p = argparse.ArgumentParser(description='HTTP proxy written in python')
+p.add_argument('--debug', action='store_true')
+args = p.parse_args()
+
 
 PROXY_HOST = "newsite.cih.edu.mx"
-PROXY_PORT = "80"
+PROXY_PORT = 80
 
 BIND_ADDR = "0.0.0.0"
-BIND_PORT = 1337
+BIND_PORT = 80
 
 class client_conn(threading.Thread):
     """Manages incoming connections"""
@@ -21,20 +29,26 @@ class client_conn(threading.Thread):
     def run(self):
         while True:
             data = self.client.recv(1024)
-            if not data: break
-            print("[{} <- {}:{}] received data:\n{}".format(self.name, self.ip, self.port, data.decode('utf-8')))
-            self.server.send(data)
+            reload(parser)
+            parser.parse(data, self, 'client')
+            self.server.sendall(data)
 
 class server_conn(threading.Thread):
     """Manages outgoing connections"""
     def __init__(self, conn, info):
-        threading.Thread.__init__()
+        threading.Thread.__init__(self)
+        self.info = info
         self.client = None
         self.server = conn
+        (self.ip, self.port) = self.info
     
-    def run():
-        pass
-
+    def run(self):
+        while True:
+            data = self.server.recv(1024)
+            if not data: break
+            reload(parser)
+            parser.parse(data, self.info, 'server')
+            self.client.sendall(data)
 
 
 client_sock = socket.socket()
@@ -46,7 +60,14 @@ threads = []
 
 try:
     while True:
-        sock.listen(4)
+
+        for p in threads:
+            for t in p:
+                if not t.is_alive():
+                    print('{} pipe is closed. terminating.'.format(t.name))
+                    t.join()
+
+        client_sock.listen(4)
         print('Listening for new connections...')
         (client, client_info) = client_sock.accept()
         server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -68,7 +89,7 @@ try:
 
         client_thread.start()
         server_thread.start()
-
+        
         threads.append((client_thread, server_thread))
         
         key += 1
@@ -77,8 +98,10 @@ except KeyboardInterrupt:
     print("\nKeyboard Interrupt (Ctrl-C was pressed)")
     if (threads):
         print("terminating threads...")
-        for t in tqdm(threads):
-            t.join()
+        for tu in tqdm(threads):
+            tu[0].join()
+            tu[1].join()
+    
     print('exiting...')
     exit()
 
